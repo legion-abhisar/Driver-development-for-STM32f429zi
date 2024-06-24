@@ -101,7 +101,35 @@ void GPIO_Init(GPIO_Handle_t *pGPIOHandle)
 		temp = 0;
 	} else {
 		// Interrupt mode
+		if(pGPIOHandle->GPIO_PinConfig.GPIO_PinMode == GPIO_MODE_IT_FT) {
+			// 1. Configure the FTSR
+			EXTI->FTSR |= ( 1 << pGPIOHandle->GPIO_PinConfig.GPIO_PinNumber );
+			// Clear corresponding RTSR bit
+			EXTI->RTSR &= ~( 1 << pGPIOHandle->GPIO_PinConfig.GPIO_PinNumber );
 
+		} else if (pGPIOHandle->GPIO_PinConfig.GPIO_PinMode == GPIO_MODE_IT_RT) {
+			// 1. Configure the RTSR
+			EXTI->RTSR |= ( 1 << pGPIOHandle->GPIO_PinConfig.GPIO_PinNumber );
+			// Clear corresponding FTSR bit
+			EXTI->FTSR &= ~( 1 << pGPIOHandle->GPIO_PinConfig.GPIO_PinNumber );
+
+		} else if (pGPIOHandle->GPIO_PinConfig.GPIO_PinMode == GPIO_MODE_IT_RFT) {
+			// 1. Configure both FTSR & RTSR
+			EXTI->FTSR |= ( 1 << pGPIOHandle->GPIO_PinConfig.GPIO_PinNumber );
+			EXTI->RTSR |= ( 1 << pGPIOHandle->GPIO_PinConfig.GPIO_PinNumber );
+		}
+
+		// 2. Configure the GPIO port selection in SYSCFG_EXTICR
+		uint8_t temp1 = pGPIOHandle->GPIO_PinConfig.GPIO_PinNumber / 4;
+		uint8_t temp2 = pGPIOHandle->GPIO_PinConfig.GPIO_PinNumber % 4;
+		uint8_t portcode = GPIO_BASEADDR_TO_CODE(pGPIOHandle->pGPIOx);
+
+		SYSCFG_PCLK_EN();
+		SYSCFG->EXTICR[temp1] = portcode << (temp2 * 4);
+
+
+		// 3. Enable the EXTI interrupt delivery using IMR
+		EXTI->IMR |= ( 1 << pGPIOHandle->GPIO_PinConfig.GPIO_PinNumber );
 	}
 
 	temp = 0;
@@ -291,7 +319,7 @@ void GPIO_ToggleOutputPin(GPIO_Regdef_t *pGPIOx, uint8_t PinNumber)
  * IRQ Configuration and ISR Handling
  */
 /***************************************************************
- * Function name		- GPIO_PeriClockControl
+ * Function name		- GPIO_IRQInterruptConfig
  *
  * Brief				- This function enables or disable peripheral clock for
  * 						the given GPIO port.
@@ -305,19 +333,72 @@ void GPIO_ToggleOutputPin(GPIO_Regdef_t *pGPIOx, uint8_t PinNumber)
  * Note					- None
  *
  **************************************************************/
-void GPIO_IRQConfig(uint8_t IRQNumber, uint8_t IRQPriority, uint8_t EnorDi)
+void GPIO_IRQInterruptConfig(uint8_t IRQNumber, uint8_t EnorDi)
 {
+	if(EnorDi == ENABLE)
+	{
+		if(IRQNumber <= 31) {
+			// Program ISER0 register
+			*NVIC_ISER0 |= ( 1 << IRQNumber );
 
+		} else if (IRQNumber > 31 && IRQNumber < 64) {
+			// Program ISER1 register
+			*NVIC_ISER1 |= ( 1 << (IRQNumber % 32) );
+
+		} else if (IRQNumber >= 64 && IRQNumber < 96) {
+			// Program ISER2 register
+			*NVIC_ISER2 |= ( 1 << (IRQNumber % 64) );
+
+		}
+	} else {
+		if(IRQNumber <= 31) {
+			// Program ICER0 register
+			*NVIC_ICER0 |= ( 1 << IRQNumber );
+
+		} else if (IRQNumber > 31 && IRQNumber < 64) {
+			// Program ICER1 register
+			*NVIC_ICER1 |= ( 1 << (IRQNumber % 32) );
+
+		} else if (IRQNumber >= 64 && IRQNumber < 96) {
+			// Program ICER2 register
+			*NVIC_ICER2 |= ( 1 << (IRQNumber % 32) );
+
+		}
+	}
 }
 
 /***************************************************************
- * Function name		- GPIO_PeriClockControl
+ * Function name		- GPIO_IRQPriorityConfig
+ *
+ * Brief				- This function sets the priority of the interrupt
+ *
+ * Param				- IRQ number
+ * Param				- IRQ priority number
+ * Param				-
+ *
+ * Return				- None
+ *
+ * Note					- None
+ *
+ **************************************************************/
+void GPIO_IRQPriorityConfig(uint8_t IRQNumber, uint8_t IRQPriority)
+{
+	// 1. First find out the IPR register
+	uint8_t iprx = IRQNumber / 4;
+	uint8_t iprx_section = IRQNumber % 4;
+
+	uint8_t shift_amount = ( 8 * iprx_section ) + (8 - NO_PR_BITS_IMPLEMENTED);
+	*(NVIC_PR_BASE_ADDR + (iprx * 4))|= (IRQPriority << shift_amount );
+}
+
+/***************************************************************
+ * Function name		- GPIO_IRQHandling
  *
  * Brief				- This function enables or disable peripheral clock for
  * 						the given GPIO port.
  *
- * Param				- Base address of the GPIO peripheral
- * Param				- ENABLE or DISABLE macros
+ * Param				-
+ * Param				-
  * Param				-
  *
  * Return				- None
@@ -327,7 +408,12 @@ void GPIO_IRQConfig(uint8_t IRQNumber, uint8_t IRQPriority, uint8_t EnorDi)
  **************************************************************/
 void GPIO_IRQHandling(uint8_t PinNumber)
 {
-
+	// Clear EXTI PR register corresponding to pin number
+	if (EXTI->PR & ( 1 << PinNumber ))
+	{
+		// Clear
+		EXTI->PR |= ( 1 << PinNumber );
+	}
 }
 
 
